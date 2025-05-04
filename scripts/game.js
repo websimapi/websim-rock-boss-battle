@@ -6,6 +6,27 @@ import { createWarningIndicator, createDamageIndicator } from './utils.js';
 
 class Game {
     constructor() {
+        // Set up initial state but don't start yet
+        this.initialized = false;
+        this.setupStartScreen();
+    }
+    
+    setupStartScreen() {
+        // Add event listener to start button
+        document.getElementById('start-button').addEventListener('click', () => {
+            // Hide start screen
+            document.getElementById('start-screen').classList.add('hidden');
+            // Show UI
+            document.getElementById('ui').classList.remove('hidden');
+            // Initialize game
+            this.initializeGame();
+        });
+    }
+    
+    initializeGame() {
+        if (this.initialized) return;
+        this.initialized = true;
+        
         this.scene = new THREE.Scene();
         this.camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
         this.renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -17,11 +38,6 @@ class Game {
         this.camera.position.set(0, 20, 10);
         this.camera.lookAt(0, 0, 0);
         
-        // Controls (for development)
-        // this.controls = new OrbitControls(this.camera, this.renderer.domElement);
-        // this.controls.enableDamping = true;
-        // this.controls.dampingFactor = 0.25;
-
         // Arena
         this.createArena();
         
@@ -56,7 +72,7 @@ class Game {
         document.getElementById('restart-button').addEventListener('click', this.restart.bind(this));
         document.getElementById('restart-button-victory').addEventListener('click', this.restart.bind(this));
         
-        // Sound effects
+        // Sound effects - pre-load but don't play yet
         this.loadSounds();
         
         // Animation loop
@@ -74,6 +90,26 @@ class Game {
             gameOver: new Audio('sounds/game_over.mp3'),
             victory: new Audio('sounds/victory.mp3')
         };
+        
+        // Pre-load all sounds without playing
+        Object.values(this.sounds).forEach(sound => {
+            sound.load();
+            sound.volume = 0.7; // Slightly reduce volume
+        });
+    }
+    
+    // Safe sound play function
+    playSound(soundName) {
+        if (this.sounds[soundName]) {
+            // Create a promise to handle any potential errors
+            const playPromise = this.sounds[soundName].play();
+            
+            if (playPromise !== undefined) {
+                playPromise.catch(error => {
+                    console.warn(`Sound play failed: ${error}`);
+                });
+            }
+        }
     }
     
     createArena() {
@@ -207,8 +243,7 @@ class Game {
                     
                     if (dist < indicator.size / 2) {
                         this.player.takeDamage(indicator.damage || 10);
-                        this.sounds.playerHit.currentTime = 0;
-                        this.sounds.playerHit.play();
+                        this.playSound('playerHit');
                     }
                     
                     // Remove damage effect after a short time
@@ -226,13 +261,13 @@ class Game {
         if (this.player.health <= 0) {
             this.gameOver = true;
             document.getElementById('game-over').classList.remove('hidden');
-            this.sounds.gameOver.play();
+            this.playSound('gameOver');
         }
         
         if (this.boss.health <= 0) {
             this.victory = true;
             document.getElementById('victory').classList.remove('hidden');
-            this.sounds.victory.play();
+            this.playSound('victory');
         }
     }
     
@@ -258,14 +293,15 @@ class Game {
             damage: damage
         });
         
-        this.sounds.warning.currentTime = 0;
-        this.sounds.warning.play();
+        this.playSound('warning');
     }
     
     restart() {
-        // Reset game state
+        // Hide game over and victory screens
         document.getElementById('game-over').classList.add('hidden');
         document.getElementById('victory').classList.add('hidden');
+        
+        // Reset game state
         
         // Remove old player and boss
         this.scene.remove(this.player.mesh);
@@ -294,8 +330,6 @@ class Game {
         const deltaTime = this.clock.getDelta();
         this.update(deltaTime);
         
-        // if (this.controls) this.controls.update();
-        
         this.renderer.render(this.scene, this.camera);
     }
 }
@@ -305,4 +339,3 @@ const game = new Game();
 
 // Expose game object to window for debugging
 window.game = game;
-
