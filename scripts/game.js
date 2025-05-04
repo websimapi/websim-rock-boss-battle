@@ -14,6 +14,9 @@ class Game {
     setupStartScreen() {
         // Add event listener to start button
         document.getElementById('start-button').addEventListener('click', () => {
+            // Load sounds immediately after user interaction to ensure browser allows playback
+            this.loadSounds(); 
+
             // Hide start screen
             document.getElementById('start-screen').classList.add('hidden');
             // Show UI
@@ -26,89 +29,138 @@ class Game {
     initializeGame() {
         if (this.initialized) return;
         this.initialized = true;
-        
+
         this.scene = new THREE.Scene();
         this.camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
         this.renderer = new THREE.WebGLRenderer({ antialias: true });
         this.renderer.setSize(window.innerWidth, window.innerHeight);
         this.renderer.shadowMap.enabled = true;
-        document.getElementById('game-container').appendChild(this.renderer.domElement);
+        // Check if the renderer DOM element already exists to prevent duplicates on restart
+        const gameContainer = document.getElementById('game-container');
+        if (!gameContainer.contains(this.renderer.domElement)) {
+            gameContainer.appendChild(this.renderer.domElement);
+        }
 
         // Camera setup for top-down view
         this.camera.position.set(0, 20, 10);
         this.camera.lookAt(0, 0, 0);
-        
+
         // Arena
         this.createArena();
-        
+
         // Lighting
         this.setupLights();
-        
+
         // Game objects
         this.player = new Player(this.scene);
         this.boss = new Boss(this.scene, this.player);
-        
+
         // Game state
         this.gameOver = false;
         this.victory = false;
-        
+
         // Attack indicators
         this.indicators = [];
-        
+
         // Input handling
         this.keys = {};
-        window.addEventListener('keydown', this.onKeyDown.bind(this));
-        window.addEventListener('keyup', this.onKeyUp.bind(this));
-        
-        // Window resize
-        window.addEventListener('resize', this.onWindowResize.bind(this));
-        
+        // Ensure listeners are not added multiple times on restart
+        if (!this.keydownListener) {
+            this.keydownListener = this.onKeyDown.bind(this);
+            window.addEventListener('keydown', this.keydownListener);
+        }
+        if (!this.keyupListener) {
+            this.keyupListener = this.onKeyUp.bind(this);
+            window.addEventListener('keyup', this.keyupListener);
+        }
+        if (!this.resizeListener) {
+            this.resizeListener = this.onWindowResize.bind(this);
+            window.addEventListener('resize', this.resizeListener);
+        }
+
+
         // UI elements
         this.healthFill = document.getElementById('health-fill');
         this.bossHealthFill = document.getElementById('boss-health-fill');
         this.stageIndicator = document.getElementById('stage-indicator');
+
+        // Restart buttons - Ensure listeners are not added multiple times
+        const restartButton = document.getElementById('restart-button');
+        const restartButtonVictory = document.getElementById('restart-button-victory');
         
-        // Restart buttons
+        // Remove previous listeners if they exist
+        restartButton.replaceWith(restartButton.cloneNode(true));
+        restartButtonVictory.replaceWith(restartButtonVictory.cloneNode(true));
+        
+        // Add new listeners
         document.getElementById('restart-button').addEventListener('click', this.restart.bind(this));
         document.getElementById('restart-button-victory').addEventListener('click', this.restart.bind(this));
         
-        // Sound effects - pre-load but don't play yet
-        this.loadSounds();
-        
+
+        // Sound effects - loading moved to click handler
+        // this.loadSounds(); // Removed from here
+
         // Animation loop
         this.clock = new THREE.Clock();
+        // Cancel previous animation frame if restarting
+        if (this.animationFrameId) {
+            cancelAnimationFrame(this.animationFrameId);
+        }
         this.animate();
     }
-    
+
     loadSounds() {
-        this.sounds = {
-            playerHit: new Audio('sounds/player_hit.mp3'),
-            bossHit: new Audio('sounds/boss_hit.mp3'),
-            bossAttack: new Audio('sounds/boss_attack.mp3'),
-            bossSpecial: new Audio('sounds/boss_special.mp3'),
-            warning: new Audio('sounds/warning.mp3'),
-            gameOver: new Audio('sounds/game_over.mp3'),
-            victory: new Audio('sounds/victory.mp3')
-        };
+        // Prevent reloading sounds if already loaded
+        if (this.sounds) return; 
         
+        this.sounds = {
+            playerHit: new Audio('/sounds/player_hit.mp3'),
+            bossHit: new Audio('/sounds/boss_hit.mp3'),
+            bossAttack: new Audio('/sounds/boss_attack.mp3'),
+            bossSpecial: new Audio('/sounds/boss_special.mp3'),
+            warning: new Audio('/sounds/warning.mp3'),
+            gameOver: new Audio('/sounds/game_over.mp3'),
+            victory: new Audio('/sounds/victory.mp3')
+        };
+
         // Pre-load all sounds without playing
         Object.values(this.sounds).forEach(sound => {
             sound.load();
             sound.volume = 0.7; // Slightly reduce volume
         });
+        
+        // Small trick to potentially improve sound readiness after interaction
+        // Play a silent sound immediately after user interaction
+        const silentSound = new Audio('data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA');
+        silentSound.play().catch(e => {}); // Play and ignore errors
     }
-    
+
     // Safe sound play function
     playSound(soundName) {
-        if (this.sounds[soundName]) {
-            // Create a promise to handle any potential errors
-            const playPromise = this.sounds[soundName].play();
-            
-            if (playPromise !== undefined) {
-                playPromise.catch(error => {
-                    console.warn(`Sound play failed: ${error}`);
-                });
-            }
+        // Ensure sounds are loaded before trying to play
+        if (!this.sounds || !this.sounds[soundName]) {
+            console.warn(`Sound "${soundName}" not loaded or does not exist.`);
+            return;
+        }
+        
+        // Reset sound to beginning if it's currently playing
+        if (!this.sounds[soundName].paused) {
+            this.sounds[soundName].currentTime = 0;
+        } else {
+            // If paused, ensure it's reset if it finished previously
+            this.sounds[soundName].currentTime = 0;
+        }
+
+        const playPromise = this.sounds[soundName].play();
+
+        if (playPromise !== undefined) {
+            playPromise.catch(error => {
+                // Log specific errors, but avoid crashing the game
+                 // Don't log interruption errors, as they are common when playing sounds rapidly
+                if (error.name !== 'AbortError') {
+                     console.warn(`Sound play failed for "${soundName}": ${error}`);
+                }
+            });
         }
     }
     
@@ -301,35 +353,53 @@ class Game {
         document.getElementById('game-over').classList.add('hidden');
         document.getElementById('victory').classList.add('hidden');
         
-        // Reset game state
-        
-        // Remove old player and boss
-        this.scene.remove(this.player.mesh);
-        this.scene.remove(this.boss.body);
-        this.scene.remove(this.boss.leftHand);
-        this.scene.remove(this.boss.rightHand);
-        
-        // Remove indicators
-        for (const indicator of this.indicators) {
-            this.scene.remove(indicator.mesh);
+        // Stop any currently playing sounds abruptly
+        if (this.sounds) {
+            Object.values(this.sounds).forEach(sound => {
+                sound.pause();
+                sound.currentTime = 0;
+            });
         }
+
+        // Clear existing scene objects
+        while(this.scene.children.length > 0){ 
+            const object = this.scene.children[0];
+            // Keep essential lights and floor if needed, or recreate them in initializeGame
+            if (object.type !== 'AmbientLight' && object.type !== 'DirectionalLight') {
+                 // Recursively dispose of geometry and materials
+                if (object.geometry) object.geometry.dispose();
+                if (object.material) {
+                    if (Array.isArray(object.material)) {
+                        object.material.forEach(mat => mat.dispose());
+                    } else {
+                        object.material.dispose();
+                    }
+                }
+            }
+            this.scene.remove(object); 
+        }
+
+        // Reset indicators array
         this.indicators = [];
         
-        // Create new player and boss
-        this.player = new Player(this.scene);
-        this.boss = new Boss(this.scene, this.player);
-        
-        // Reset game state
-        this.gameOver = false;
-        this.victory = false;
+        // Re-initialize the game state without reloading the page
+        this.initialized = false; // Allow re-initialization
+        this.initializeGame(); 
+
+        // Show UI again
+        document.getElementById('ui').classList.remove('hidden');
     }
-    
+
     animate() {
-        requestAnimationFrame(this.animate.bind(this));
-        
+        // Store the animation frame ID so it can be cancelled on restart
+        this.animationFrameId = requestAnimationFrame(this.animate.bind(this));
+
         const deltaTime = this.clock.getDelta();
-        this.update(deltaTime);
+        // Prevent large deltaTime steps if the tab was inactive
+        const dt = Math.min(deltaTime, 0.1); // Cap delta time at 100ms
         
+        this.update(dt);
+
         this.renderer.render(this.scene, this.camera);
     }
 }
